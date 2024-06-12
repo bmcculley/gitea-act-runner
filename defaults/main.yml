@@ -1,0 +1,15 @@
+---
+# defaults file for gitea-act-runner
+gitea_version: "1.22"
+gitea_schema: https
+web_server_port: 80
+gitea_backend_port: 3000
+gitea_ssh_port: 22
+web_server_name: git.example.com
+web_server_config_name: gitexamplecom
+nginx_version: 1.22.0-1ubuntu3
+gitea_admin_username: user0
+gitea_admin_password: password
+gitea_admin_email: admin@example.com
+gitea_act_version: "0.2.10"
+gitea_act_runner_name: act-runner

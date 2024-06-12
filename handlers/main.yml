@@ -1,0 +1,31 @@
+---
+# handlers file for gitea-act-runner
+- name: Start Docker service
+  service:
+    name: docker
+    daemon_reload: true
+    state: started
+    enabled: true
+
+- name: Reload the Nginx service
+  service:
+    name: nginx
+    state: reloaded
+
+- name: Start Gitea
+  service:
+    name: gitea
+    daemon_reload: true
+    state: started
+    enabled: true
+  register: giteaserviceDetails
+  until: giteaserviceDetails.status.ActiveState == "active"
+  retries: 15
+  delay: 20
+
+- name: Start Gitea Act Runner service
+  service:
+    name: act_runner
+    daemon_reload: true
+    state: started
+    enabled: true

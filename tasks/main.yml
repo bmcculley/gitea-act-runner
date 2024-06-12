@@ -1,0 +1,177 @@
+---
+# tasks file for gitea-act-runner
+- name: Install required system packages
+  apt:
+    pkg:
+      - acl
+      - git
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - wget
+      - software-properties-common
+    state: latest
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Add Docker GPG apt Key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker Repository
+  apt_repository:
+    repo: deb https://download.docker.com/linux/ubuntu focal stable
+    state: present
+
+- name: Update apt and install docker-ce and docker-compose
+  apt:
+    pkg:
+      - docker-ce
+      - docker-compose
+    state: latest
+    update_cache: true
+  notify: Start Docker service
+
+- meta: flush_handlers
+
+- name: "Install Nginx to version {{ nginx_version }}"
+  apt:
+    name: "nginx={{ nginx_version }}"
+    state: present
+
+- name: Copy the Nginx configuration file to the host
+  template:
+    src: templates/nginx.conf.j2
+    dest: "/etc/nginx/sites-available/{{ web_server_config_name }}"
+    
+- name: Create link to the new config to enable it
+  file:
+    dest: "/etc/nginx/sites-enabled/{{ web_server_config_name }}"
+    src: "/etc/nginx/sites-available/{{ web_server_config_name }}"
+    state: link
+  notify: Reload the Nginx service
+
+- meta: flush_handlers
+
+- name: Download Gitea binary
+  get_url:
+    url: "https://dl.gitea.io/gitea/{{ gitea_version }}/gitea-{{ gitea_version }}-linux-amd64"
+    dest: /usr/local/bin/gitea
+    mode: '0755'
+
+- name: Create Gitea user
+  user:
+    name: git
+    comment: Git Version Control
+    system: yes
+    shell: /bin/bash
+
+- name: Create Gitea data directory
+  file:
+    path: "/var/lib/gitea/{{ item }}"
+    state: directory
+    owner: git
+    group: git
+    mode: '750'
+  loop:
+    - custom
+    - data
+    - log
+
+- name: Create Gitea configuration directory
+  file:
+    path: /etc/gitea
+    state: directory
+    owner: root
+    group: git
+    mode: '770'
+
+- name: Generate Gitea LFS_JWT_SECRET
+  command: "gitea generate secret LFS_JWT_SECRET"
+  register: gitea_lfs_jwt_secret
+
+- name: Generate Gitea INTERNAL_TOKEN
+  command: "gitea generate secret INTERNAL_TOKEN"
+  register: gitea_internal_token
+
+- name: Generate Gitea JWT_SECRET
+  command: "gitea generate secret JWT_SECRET"
+  register: gitea_jwt_secret
+
+- name: Copy the Gitea configuration file to the host
+  template:
+    src: templates/app.ini.j2
+    dest: "/etc/gitea/app.ini"
+    owner: root
+    group: git
+    mode: '770'
+
+- name: Download Gitea systemd service file.
+  get_url:
+    url: "https://raw.githubusercontent.com/go-gitea/gitea/release/v{{ gitea_version }}/contrib/systemd/gitea.service"
+    dest: /etc/systemd/system/gitea.service
+    mode: '0755'
+  notify: Start Gitea
+
+- meta: flush_handlers
+
+- name: Create Gitea admin user
+  command: "gitea admin user create --username {{ gitea_admin_username }} --password {{ gitea_admin_password }} --email {{ gitea_admin_email }} --admin -c /etc/gitea/app.ini"
+  become_user: git
+  args:
+    chdir: /var/lib/gitea/
+
+- name: Download Gitea Act Runner binary
+  get_url:
+    url: "https://gitea.com/gitea/act_runner/releases/download/v{{ gitea_act_version }}/act_runner-{{ gitea_act_version }}-linux-amd64"
+    dest: /usr/local/bin/act_runner
+    mode: '0755'
+
+- name: Create Gitea act runner configuration directory
+  file:
+    path: /etc/act_runner
+    state: directory
+    owner: root
+    group: git
+    mode: '770'
+
+- name: Initialize Gitea Act Runner
+  command: "act_runner generate-config"
+  become_user: git
+  register: act_runner_config
+
+- name: Create Gitea Act Runner data directory
+  file:
+    path: /var/lib/act_runner
+    state: directory
+    owner: root
+    group: root
+    mode: '770'
+
+- name: Create Gitea Act Runner config file
+  copy:
+    content: "{{ act_runner_config }}"
+    dest: /etc/act_runner/config.yaml
+    mode: '0644'
+
+- name: Get registration token for act runner
+  command: "gitea --config /etc/gitea/app.ini actions generate-runner-token"
+  become_user: git
+  register: act_runner_token
+
+- name: Register Gitea act runner
+  command: "act_runner register --no-interactive --instance {{ gitea_schema }}://{{ web_server_name }}/ --token {{ act_runner_token.stdout }} --name {{ gitea_act_runner_name }}"
+  args:
+    chdir: /var/lib/act_runner
+
+- name: Copy the Gitea act runner service file
+  template:
+    src: templates/act_runner.service.j2
+    dest: "/etc/systemd/system/act_runner.service"
+    owner: root
+    group: root
+    mode: '755'
+  notify: Start Gitea Act Runner service
+
+- meta: flush_handlers
